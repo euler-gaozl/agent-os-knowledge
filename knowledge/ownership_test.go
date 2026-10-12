@@ -109,7 +109,7 @@ func TestMigrationOwnsOneDomainAndIndexerPrivileges(t *testing.T) {
 	}
 }
 
-func TestFailedOwnerMigrationRollsBackSchemaAndGrants(t *testing.T) {
+func TestFailedOwnerMigrationRollsBackSchema(t *testing.T) {
 	db, role, idxRole := fixtureDatabase(t)
 	saved := migrationSQL
 	migrationSQL += "\nSELECT 1/0;"
@@ -120,5 +120,45 @@ func TestFailedOwnerMigrationRollsBackSchemaAndGrants(t *testing.T) {
 	var exists bool
 	if err := db.QueryRow(context.Background(), "SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='knowledge')").Scan(&exists); err != nil || exists {
 		t.Fatal("partial schema survived failed migration", err)
+	}
+}
+
+func TestGrantFailureRollsBackEarlierGrantsOnExistingTables(t *testing.T) {
+	db, role, idxRole := fixtureDatabase(t)
+	ctx := context.Background()
+	if err := Migrate(ctx, db, role, idxRole); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []string{role, idxRole} {
+		if _, err := db.Exec(ctx, "REVOKE ALL ON ALL TABLES IN SCHEMA knowledge FROM "+pgx.Identifier{r}.Sanitize()+"; REVOKE ALL ON SCHEMA knowledge FROM "+pgx.Identifier{r}.Sanitize()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// This disposable database already has its tables. Fail only after every
+	// Knowledge table GRANT, when the first Indexer SELECT GRANT executes.
+	if _, err := db.Exec(ctx, `CREATE FUNCTION public.fail_indexer_grant() RETURNS event_trigger LANGUAGE plpgsql AS $$
+ BEGIN IF position('GRANT SELECT ON TABLE' in current_query())>0 THEN RAISE EXCEPTION 'controlled fixture grant failure'; END IF; END $$;
+ CREATE EVENT TRIGGER fail_indexer_grant ON ddl_command_end WHEN TAG IN ('GRANT') EXECUTE FUNCTION public.fail_indexer_grant();`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, db, role, idxRole); err == nil || !strings.Contains(err.Error(), "controlled fixture grant failure") {
+		t.Fatal("grant failure was not reached", err)
+	}
+	for _, r := range []string{role, idxRole} {
+		var allowed bool
+		if err := db.QueryRow(ctx, "SELECT has_schema_privilege($1,'knowledge','USAGE')", r).Scan(&allowed); err != nil || allowed {
+			t.Fatal("schema grant survived rollback", err)
+		}
+		for _, table := range []string{"documents", "artifacts", "artifact_refs", "knowledge_files", "knowledge_chunks", "service_migrations"} {
+			for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
+				if err := db.QueryRow(ctx, "SELECT has_table_privilege($1,$2,$3)", r, "knowledge."+table, privilege).Scan(&allowed); err != nil || allowed {
+					t.Fatal("partial table grant survived rollback", table, privilege, err)
+				}
+			}
+		}
+	}
+	var count int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM pg_tables WHERE schemaname='knowledge'").Scan(&count); err != nil || count != 6 {
+		t.Fatal("pre-existing tables lost", err, count)
 	}
 }
