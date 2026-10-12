@@ -7,17 +7,7 @@
   "contract": {
     "http": "agentos-http-v0.6-notes-lifecycle",
     "data": "knowledge-v0.6",
-    "tools": [
-      "knowledge_search",
-      "note_save",
-      "artifact_read",
-      "spawn_agent",
-      "sandbox_exec",
-      "document_read",
-      "run_recall",
-      "note_revise",
-      "note_retire"
-    ],
+    "tools": [],
     "engines": []
   },
   "indexing_protocol": "knowledge-indexing-v1"
