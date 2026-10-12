@@ -1,4 +1,5 @@
 /.local/
+/.state/
 /bin/
 /coverage.out
 *.exe

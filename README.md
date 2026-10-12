@@ -72,3 +72,36 @@ processes in sequence, and a synthetic provider. The Windows check passed old
 to new interrupted-upload recovery (`unknown`, one upload) and new to old saved
 track polling (`ready`, one upload/one poll). This is process recovery on one
 machine; it does not prove real LightRAG availability or machine-failure HA.
+
+The opt-in `retrieval.yml` workflow now belongs to this repository, with the
+Milvus configuration and controlled LightRAG model fixture. It uses real
+Milvus/LightRAG and pinned Qwen embedding inference, rejects skipped tests,
+and has no commit trigger. These newly transferred workflows await the final
+unified Linux run; old monorepo results are historical evidence only.
+
+`cmd/capacity` runs the owner's real migration and lexical retrieval against
+SQL-generated fixtures. It requires `CAPACITY_DISPOSABLE=agentos-capacity-fixtures-only`,
+`CAPACITY_DOCUMENTS` (1000..1000000, multiple of 1000), and a privileged
+`CAPACITY_DATABASE_URL` targeting a **new disposable `agentos_capacity` database**.
+Use an absolute new `CAPACITY_REPORT` path (default `/evidence/capacity.json`).
+It refuses existing Knowledge/marker schemas and never drops or truncates them.
+Failed fixtures and their uniquely named NOLOGIN roles remain in the disposable
+cluster for diagnosis; dispose the entire dedicated cluster when no longer needed.
+Measured queries run under the migrated Knowledge role via SET ROLE, not the
+administrator. The report records revision isolation, present/absent queries,
+latencies and explicit scope. It does not claim enforced resource limits on its
+own, upload throughput, ranking quality or whole-platform capacity.
+
+Manual/reusable `capacity.yml` defaults to 1,000 documents; ten million chunks
+require explicitly selecting one million documents on a sufficiently large
+disposable runner. There is no push/PR trigger. The workflow retains actual
+container limits and resource samples. New owner-scale Linux execution remains
+pending; the local 1,000-document check is a migration smoke test only.
+
+Local proof `p2-owner-coverage-58d357e0cd7b4e71bb4ea51cf7661743` used a new
+PostgreSQL 18 cluster: 1,000 documents/10,000 chunks, zero query errors,
+absent-query zero hits, revision isolation, and rejection of fixture reuse.
+The query path and migrator are this owner's code; no paid model calls or
+external retrieval backend were involved. The dedicated cluster stopped after
+the check and its evidence is retained. No resource limits were imposed on this
+Windows smoke run, so its latency is not the 2 CPU/4 GiB acceptance result.

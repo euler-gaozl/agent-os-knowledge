@@ -1,0 +1,79 @@
+name: Knowledge disposable capacity acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      documents:
+        description: 'SQL fixture documents (multiple of 1000, max 1000000); ten chunks each'
+        default: '1000'
+        required: true
+  workflow_call:
+    inputs:
+      documents:
+        type: string
+        default: '1000'
+permissions:
+  contents: read
+env:
+  GOWORK: 'off'
+  GOPROXY: 'off'
+jobs:
+  capacity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate size and available fixture disk
+        env: {DOCUMENTS: '${{ inputs.documents }}'}
+        run: |
+          set -euo pipefail
+          [[ "$DOCUMENTS" =~ ^[1-9][0-9]{3,6}$ ]]
+          test "$DOCUMENTS" -le 1000000
+          test "$((DOCUMENTS % 1000))" -eq 0
+          mkdir -p .state/capacity-evidence
+          df -Pk . | tee .state/capacity-evidence/disk-before.txt
+          FREE_KIB=$(df -Pk . | awk 'NR==2 {print $4}')
+          # Keep 4 GiB free plus a conservative 32 KiB per fixture document.
+          # Refuse an undersized runner; do not delete its installed SDKs.
+          test "$FREE_KIB" -ge "$((4194304 + DOCUMENTS * 32))"
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod, cache: false}
+      - name: Build the owner benchmark
+        run: CGO_ENABLED=0 go build -mod=vendor -trimpath -o /tmp/capacity ./cmd/capacity
+      - name: Initialize a dedicated disposable database
+        run: |
+          docker network create agentos-capacity
+          docker run -d --name capacity-db --network agentos-capacity --cpus=1.5 --memory=3g -e POSTGRES_DB=agentos_capacity -e POSTGRES_USER=fixture -e POSTGRES_PASSWORD=capacity-fixture-only postgres:18 -c shared_buffers=256MB -c work_mem=8MB -c maintenance_work_mem=256MB -c max_connections=16 -c max_wal_size=1GB -c wal_compression=on
+          for i in $(seq 1 60); do docker exec capacity-db pg_isready -U fixture -d agentos_capacity && break; sleep 1; done
+          docker exec capacity-db pg_isready -U fixture -d agentos_capacity
+      - name: Run SQL fixtures and real owner retrieval
+        env: {DOCUMENTS: '${{ inputs.documents }}'}
+        run: |
+          (while true; do
+            docker stats --no-stream --format '{{json .}}' capacity-db capacity-client 2>/dev/null >> .state/capacity-evidence/resources.jsonl || true
+            df -Pk . >> .state/capacity-evidence/disk-samples.txt
+            FREE_KIB=$(df -Pk . | awk 'NR==2 {print $4}')
+            if [ "$FREE_KIB" -lt 2097152 ]; then
+              echo 'Stopped before exhausting disk; not a passing capacity result.' > .state/capacity-evidence/disk-stop.txt
+              docker stop -t 5 capacity-client || true
+              break
+            fi
+            sleep 5
+          done) &
+          SAMPLER=$!
+          trap 'kill "$SAMPLER" 2>/dev/null || true' EXIT
+          docker run --name capacity-client --user "$(id -u):$(id -g)" --network agentos-capacity --cpus=0.5 --memory=512m --read-only --cap-drop=ALL --security-opt=no-new-privileges -v /tmp/capacity:/app/capacity:ro -v "$PWD/.state/capacity-evidence:/evidence" -e CAPACITY_DISPOSABLE=agentos-capacity-fixtures-only -e CAPACITY_DOCUMENTS="$DOCUMENTS" -e CAPACITY_DATABASE_URL=postgres://fixture:capacity-fixture-only@capacity-db:5432/agentos_capacity?sslmode=disable alpine:3.23 /app/capacity
+          jq -e '.passed == true and .revision_isolation == true and .errors == 0' .state/capacity-evidence/capacity.json
+      - name: Retain actual limits and resource observations
+        if: always()
+        run: |
+          docker inspect --format '{{json .HostConfig}}' capacity-db capacity-client > .state/capacity-evidence/container-limits.jsonl
+          test -s .state/capacity-evidence/resources.jsonl
+          test -s .state/capacity-evidence/disk-samples.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: knowledge-owner-capacity, path: '.state/capacity-evidence/'}
+      - name: Dispose fixture containers
+        if: always()
+        run: |
+          docker rm -f -v capacity-client capacity-db || true
+          docker network rm agentos-capacity || true

@@ -1,0 +1,151 @@
+name: Knowledge real retrieval backends
+on:
+  workflow_dispatch:
+  workflow_call:
+env:
+  GOWORK: "off"
+  GOPROXY: "off"
+permissions:
+  contents: read
+jobs:
+  milvus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env: {POSTGRES_DB: agentos_rag_ci, POSTGRES_USER: agentos, POSTGRES_PASSWORD: disposable-rag-ci-only}
+        ports: ['5432:5432']
+        options: >-
+          --memory=512m --cpus=0.5
+          --health-cmd "pg_isready -U agentos -d agentos_rag_ci"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://agentos:disposable-rag-ci-only@127.0.0.1:5432/agentos_rag_ci?sslmode=disable
+      TEST_MILVUS_URL: http://127.0.0.1:19530
+      TEST_MILVUS_RESTART: agentos-rag-milvus
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod, cache: false}
+      - name: Start pinned real Milvus with embedded dependencies
+        run: |
+          mkdir -p .state/rag-evidence
+          # External retrieval budget, separate from the 2 CPU / 4 GiB platform.
+          # No provider credentials or production documents are used.
+          docker run -d --name agentos-rag-milvus --cpus=1.5 --memory=4g \
+            -e ETCD_USE_EMBED=true -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
+            -e ETCD_CONFIG_PATH=/milvus/configs/embedEtcd.yaml \
+            -e COMMON_STORAGETYPE=local -e DEPLOY_MODE=STANDALONE \
+            -v "$PWD/deploy/milvus-ci-etcd.yaml:/milvus/configs/embedEtcd.yaml:ro" \
+            -p 127.0.0.1:19530:19530 -p 127.0.0.1:9091:9091 \
+            milvusdb/milvus:v2.6.24 milvus run standalone
+          for i in $(seq 1 120); do curl -fsS http://127.0.0.1:9091/healthz >/dev/null && break; sleep 2; done
+          curl -fsS http://127.0.0.1:9091/healthz >/dev/null
+          docker image inspect milvusdb/milvus:v2.6.24 --format '{{json .RepoDigests}}' > .state/rag-evidence/milvus-image.json
+      - name: Production adapter against real Milvus, controlled embedding fixture
+        run: |
+          set -o pipefail
+          (while true; do docker stats --no-stream --format '{{json .}}' agentos-rag-milvus >> .state/rag-evidence/milvus-resources.jsonl || true; sleep 3; done) &
+          SAMPLER=$!
+          trap 'kill "$SAMPLER" 2>/dev/null || true' EXIT
+          go test -mod=vendor -json -count=1 -timeout 6m ./knowledge -run '^TestMilvusLiveContract$' | tee .state/rag-evidence/milvus-test.jsonl
+          jq -se 'any(.[]; .Action == "pass" and .Test == "TestMilvusLiveContract") and (all(.[]; .Action != "skip"))' .state/rag-evidence/milvus-test.jsonl
+      - uses: actions/cache@v4
+        with:
+          path: .state/models/Qwen3-Embedding-0.6B-Q8_0.gguf
+          key: qwen-embedding-06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439
+      - name: Verify pinned public embedding model and start actual CPU inference
+        run: |
+          mkdir -p .state/models
+          MODEL=.state/models/Qwen3-Embedding-0.6B-Q8_0.gguf
+          if [ ! -f "$MODEL" ]; then
+            curl -fL --retry 3 --max-time 300 'https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf' -o "$MODEL"
+          fi
+          echo "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439  $MODEL" | sha256sum --check
+          docker run -d --name agentos-rag-embedding --cpus=1.5 --memory=2g --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+            -v "$PWD/.state/models:/models:ro" -p 127.0.0.1:8114:8080 \
+            ghcr.io/ggml-org/llama.cpp@sha256:fc9b506e89c1a1cfdd7bc056480f54dc657c1c04d76839a08642dc280b8ed2f6 \
+            -m /models/Qwen3-Embedding-0.6B-Q8_0.gguf --alias qwen3-embedding-0.6b-q8 \
+            --embedding --pooling last --host 0.0.0.0 --port 8080 --threads 2 --ctx-size 4096 --batch-size 1024 --ubatch-size 1024 --parallel 1
+          for i in $(seq 1 90); do curl -fsS http://127.0.0.1:8114/health >/dev/null && break; sleep 2; done
+          curl -fsS http://127.0.0.1:8114/health > .state/rag-evidence/embedding-health.json
+      - name: Actual Qwen embeddings plus Milvus, annotated Chinese source fixtures
+        env: {TEST_EMBEDDING_URL: 'http://127.0.0.1:8114/v1'}
+        run: |
+          set -o pipefail
+          (while true; do docker stats --no-stream --format '{{json .}}' agentos-rag-milvus agentos-rag-embedding >> .state/rag-evidence/embedding-resources.jsonl || true; sleep 3; done) &
+          SAMPLER=$!
+          trap 'kill "$SAMPLER" 2>/dev/null || true' EXIT
+          go test -mod=vendor -json -count=1 -timeout 6m ./knowledge -run '^TestRealEmbeddingAndMilvusRetrieval$' | tee .state/rag-evidence/embedding-test.jsonl
+          jq -se 'any(.[]; .Action == "pass" and .Test == "TestRealEmbeddingAndMilvusRetrieval") and (all(.[]; .Action != "skip"))' .state/rag-evidence/embedding-test.jsonl
+      - name: Retain diagnostics
+        if: always()
+        run: |
+          docker logs --tail 250 agentos-rag-milvus > .state/rag-evidence/milvus-log.txt 2>&1 || true
+          docker inspect --format '{{json .State}}' agentos-rag-milvus > .state/rag-evidence/milvus-state.json || true
+          docker logs --tail 100 agentos-rag-embedding > .state/rag-evidence/embedding-log.txt 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: real-milvus-evidence, path: '.state/rag-evidence/'}
+      - name: Dispose disposable backend
+        if: always()
+        run: docker rm -f -v agentos-rag-milvus agentos-rag-embedding || true
+  lightrag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env: {POSTGRES_DB: agentos_rag_ci, POSTGRES_USER: agentos, POSTGRES_PASSWORD: disposable-rag-ci-only}
+        ports: ['5432:5432']
+        options: >-
+          --memory=512m --cpus=0.5
+          --health-cmd "pg_isready -U agentos -d agentos_rag_ci"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://agentos:disposable-rag-ci-only@127.0.0.1:5432/agentos_rag_ci?sslmode=disable
+      TEST_LIGHTRAG_URL: http://127.0.0.1:9621
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod, cache: false}
+      - name: Start pinned LightRAG and controlled model fixture
+        run: |
+          mkdir -p .state/rag-evidence
+          docker network create agentos-rag
+          docker run -d --name rag-model-fixture --network agentos-rag --cpus=0.25 --memory=128m --read-only --cap-drop=ALL \
+            -v "$PWD/scripts/rag-model-fixture.mjs:/fixture.mjs:ro" node:24-alpine node /fixture.mjs
+          docker run -d --name agentos-rag-lightrag --network agentos-rag --cpus=2 --memory=3g \
+            -p 127.0.0.1:9621:9621 -e HOST=0.0.0.0 -e PORT=9621 -e WORKSPACE=ci_disposable \
+            -e LLM_BINDING=openai -e LLM_BINDING_HOST=http://rag-model-fixture:8113/v1 \
+            -e LLM_BINDING_API_KEY=disposable-fixture-only -e LLM_MODEL=controlled-extraction \
+            -e EMBEDDING_BINDING=openai -e EMBEDDING_BINDING_HOST=http://rag-model-fixture:8113/v1 \
+            -e EMBEDDING_BINDING_API_KEY=disposable-fixture-only -e EMBEDDING_MODEL=controlled-embedding \
+            -e EMBEDDING_DIM=4 -e EMBEDDING_USE_BASE64=false -e EMBEDDING_SEND_DIM=false \
+            -e MAX_ASYNC_LLM=2 -e MAX_PARALLEL_INSERT=2 -e EMBEDDING_FUNC_MAX_ASYNC=2 \
+            ghcr.io/hkuds/lightrag:v1.5.7
+          for i in $(seq 1 120); do curl -fsS http://127.0.0.1:9621/health >/dev/null && break; sleep 2; done
+          curl -fsS http://127.0.0.1:9621/health > .state/rag-evidence/lightrag-health.json
+          docker image inspect ghcr.io/hkuds/lightrag:v1.5.7 --format '{{json .RepoDigests}}' > .state/rag-evidence/lightrag-image.json
+      - name: Real graph ingestion, tracking, query and source isolation
+        run: |
+          set -o pipefail
+          (while true; do docker stats --no-stream --format '{{json .}}' agentos-rag-lightrag >> .state/rag-evidence/lightrag-resources.jsonl || true; sleep 3; done) &
+          SAMPLER=$!
+          trap 'kill "$SAMPLER" 2>/dev/null || true' EXIT
+          go test -mod=vendor -json -count=1 -timeout 6m ./knowledge -run '^TestLightRAGLiveContract$' | tee .state/rag-evidence/lightrag-test.jsonl
+          jq -se 'any(.[]; .Action == "pass" and .Test == "TestLightRAGLiveContract") and (all(.[]; .Action != "skip"))' .state/rag-evidence/lightrag-test.jsonl
+      - name: Retain diagnostics
+        if: always()
+        run: |
+          docker logs --tail 250 agentos-rag-lightrag > .state/rag-evidence/lightrag-log.txt 2>&1 || true
+          docker inspect --format '{{json .State}}' agentos-rag-lightrag > .state/rag-evidence/lightrag-state.json || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: real-lightrag-evidence, path: '.state/rag-evidence/'}
+      - name: Dispose disposable backends
+        if: always()
+        run: |
+          docker rm -f -v agentos-rag-lightrag rag-model-fixture || true
+          docker network rm agentos-rag || true

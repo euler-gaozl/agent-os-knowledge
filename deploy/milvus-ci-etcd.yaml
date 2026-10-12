@@ -1,0 +1,6 @@
+# Isolated, disposable CI instance; never expose this embedded etcd publicly.
+listen-client-urls: http://127.0.0.1:2379
+advertise-client-urls: http://127.0.0.1:2379
+quota-backend-bytes: 268435456
+auto-compaction-mode: revision
+auto-compaction-retention: '1000'
