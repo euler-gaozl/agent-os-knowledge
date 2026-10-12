@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	. "github.com/euler-gaozl/agent-os-sdk/contracts"
 	"github.com/euler-gaozl/agent-os-sdk/servicehttp"
 	"github.com/jackc/pgx/v5"
@@ -37,6 +38,66 @@ func (p *indexerProcess) stop(t *testing.T) {
 		p.stopped = true
 	case <-time.After(5 * time.Second):
 		t.Fatal("fixture Indexer did not terminate")
+	}
+}
+
+func (p *indexerProcess) killAtFault(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if ctx.Err() != nil {
+		t.Fatal("fault deadline expired before explicit kill")
+	}
+	select {
+	case <-p.done:
+		p.stopped = true
+		t.Fatal("fixture process exited before fault injection")
+	default:
+	}
+	if err := p.command.Process.Kill(); err != nil {
+		t.Fatal("explicit fault kill failed")
+	}
+	select {
+	case err := <-p.done:
+		p.stopped = true
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.Success() {
+			t.Fatal("fault did not produce a failed process exit")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("fault-killed process did not exit")
+	}
+}
+
+func indexerFixtureDSN(base, database, role string) (string, error) {
+	u, err := url.Parse(base)
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
+		return "", errors.New("fixture requires explicit PostgreSQL URL")
+	}
+	u.User = url.UserPassword(role, "fixture-only")
+	u.Path = "/" + database
+	query := u.Query()
+	for key := range query {
+		switch strings.ToLower(key) {
+		case "user", "password", "dbname", "database":
+			query.Del(key)
+		}
+	}
+	query.Set("search_path", "knowledge,public")
+	u.RawQuery = query.Encode()
+	cfg, err := pgx.ParseConfig(u.String())
+	if err != nil || cfg.User != role || cfg.Database != database || cfg.Password != "fixture-only" {
+		return "", errors.New("fixture connection scope validation failed")
+	}
+	return u.String(), nil
+}
+
+func TestIndexerFixtureDSNRemovesIdentityOverrides(t *testing.T) {
+	dsn, err := indexerFixtureDSN("postgres://initial:initial@127.0.0.1:55591/postgres?user=override&password=override&dbname=original&database=original&sslmode=disable", "isolated_fixture", "restricted_fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil || cfg.User != "restricted_fixture" || cfg.Database != "isolated_fixture" || cfg.Password != "fixture-only" {
+		t.Fatal("identity query parameters escaped fixture scope")
 	}
 }
 
@@ -157,15 +218,20 @@ func TestIndexerBinaryCompatibility(t *testing.T) {
 			if _, err := db.Exec(ctx, "ALTER ROLE "+pgx.Identifier{idxRole}.Sanitize()+" LOGIN PASSWORD 'fixture-only'"); err != nil {
 				t.Fatal(err)
 			}
-			fixtureURL, err := url.Parse(os.Getenv("TEST_DATABASE_URL"))
-			if err != nil || fixtureURL.Scheme != "postgres" {
-				t.Fatal("fixture requires explicit PostgreSQL URL")
+			fixtureDSN, err := indexerFixtureDSN(os.Getenv("TEST_DATABASE_URL"), db.Config().ConnConfig.Database, idxRole)
+			if err != nil {
+				t.Fatal(err)
 			}
-			fixtureURL.User = url.UserPassword(idxRole, "fixture-only")
-			fixtureURL.Path = "/" + db.Config().ConnConfig.Database
-			query := fixtureURL.Query()
-			query.Set("search_path", "knowledge,public")
-			fixtureURL.RawQuery = query.Encode()
+			identity, err := pgx.Connect(ctx, fixtureDSN)
+			if err != nil {
+				t.Fatal("fixture role could not connect")
+			}
+			var actualUser, actualDatabase string
+			err = identity.QueryRow(ctx, "SELECT current_user,current_database()").Scan(&actualUser, &actualDatabase)
+			identity.Close(ctx)
+			if err != nil || actualUser != idxRole || actualDatabase != db.Config().ConnConfig.Database {
+				t.Fatal("fixture connected outside expected identity or database")
+			}
 			var uploads, polls atomic.Int32
 			var handoff atomic.Bool
 			entered := make(chan struct{})
@@ -209,7 +275,7 @@ func TestIndexerBinaryCompatibility(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			first := startIndexerBinary(t, ctx, tc.first, fixtureURL.String(), peer.URL)
+			first := startIndexerBinary(t, ctx, tc.first, fixtureDSN, peer.URL)
 			select {
 			case <-entered:
 			case <-ctx.Done():
@@ -220,9 +286,17 @@ func TestIndexerBinaryCompatibility(t *testing.T) {
 				expected = "external_pending"
 			}
 			waitFileStatus(t, ctx, store, file.ID, expected)
-			first.stop(t)
+			beforeKill, err := store.KnowledgeFile(ctx, file.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first.killAtFault(t, ctx)
+			afterKill, err := store.KnowledgeFile(ctx, file.ID)
+			if err != nil || afterKill.Status != expected || afterKill.TrackID != beforeKill.TrackID {
+				t.Fatal("persisted fault boundary changed before replacement started", err)
+			}
 			handoff.Store(true)
-			second := startIndexerBinary(t, ctx, tc.second, fixtureURL.String(), peer.URL)
+			second := startIndexerBinary(t, ctx, tc.second, fixtureDSN, peer.URL)
 			expected = "unknown"
 			if tc.mode == "tracked" {
 				expected = "ready"
@@ -234,6 +308,9 @@ func TestIndexerBinaryCompatibility(t *testing.T) {
 			}
 			if tc.mode == "tracked" && polls.Load() < 1 {
 				t.Fatal("saved receipt was not polled")
+			}
+			if tc.mode == "unknown" && polls.Load() != 0 {
+				t.Fatal("unreceipted upload unexpectedly polled")
 			}
 			t.Logf("actual executable handoff: final=%s uploads=%d polls=%d", expected, uploads.Load(), polls.Load())
 		})
