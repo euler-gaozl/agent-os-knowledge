@@ -2,7 +2,8 @@
 
 Independent Go service for versioned knowledge uploads, retained source text,
 bounded lexical retrieval, and Milvus/LightRAG adapters. Source extraction is
-under verification; this repository is not yet the deployed Windows service.
+verified in an independent offline clone and deployed on Windows with separate
+Knowledge/Indexer upgrade and rollback checks. Full platform delivery continues.
 
 ## Ownership and Indexer contract
 
@@ -37,6 +38,11 @@ automatically import old public tables, revoke pre-existing grants, provision
 credentials, or reverse schema changes on rollback. Fresh Indexer roles get
 only SELECT on documents/files/chunks and UPDATE on files/chunks. Legacy roles
 may retain earlier broader grants until separately audited and retired.
+The archived monorepo Indexer checks `artifacts` and `artifact_refs` in its
+startup readiness probe. Keep SELECT on those two tables while that binary is
+an allowed rollback target; only retire those legacy grants after ending that
+rollback window. New Indexer-only deployments do not need them. Do not revoke
+them and then claim the old executable remains rollback-compatible.
 
 Use the template in `deploy/service.example.json` with a protected real config.
 Knowledge defaults to `127.0.0.1:8095`. Empty Registry/Runtime addresses retain
@@ -58,3 +64,11 @@ explicit `TEST_DATABASE_URL` for fixture administration and create independent
 disposable databases and NOLOGIN roles; they never migrate that URL's database.
 Optional live Milvus/LightRAG/Embedding tests remain explicitly opt-in.
 No real credential or paid model call belongs in fixtures or CI.
+
+Actual cross-version executable handoff is opt-in with absolute
+`TEST_OLD_INDEXER_BINARY` and `TEST_NEW_INDEXER_BINARY` paths plus the disposable
+PostgreSQL fixture URL. It creates isolated databases, two local Indexer
+processes in sequence, and a synthetic provider. The Windows check passed old
+to new interrupted-upload recovery (`unknown`, one upload) and new to old saved
+track polling (`ready`, one upload/one poll). This is process recovery on one
+machine; it does not prove real LightRAG availability or machine-failure HA.
