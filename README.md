@@ -115,3 +115,36 @@ This avoids hiding later document IDs inside paged JSON. Committed old tool
 receipts are unchanged. Local PostgreSQL tests: 20 pass, five explicit opt-in
 skips (external backends and Indexer binary/helper); vet/build pass. Real-model
 delivery evidence and limitations belong to the integration delivery ledger.
+
+## Retained source archives
+
+Control callers can attach original source bytes and their historical UTF-8
+extraction to an existing immutable upload using
+`POST /v1/files/{file-id}/source-archives`. The caller supplies the uploaded file
+SHA-256, source metadata, exact raw/text hashes and matching Unicode ranges in
+both the extraction and the uploaded document. Raw storage supports identity or
+gzip; compressed bytes are preserved and decompression is bounded. Raw stored
+bytes, expanded bytes and extraction are each limited to 1 MiB; the **entire JSON
+request is limited to 2 MiB**, including base64 and escaping overhead.
+
+Raw/text/manifest artifacts and their file-scoped retention references commit in
+one transaction. Deterministic manifests make per-file retries idempotent. The
+manifest root is distinct from the payload root, independent of globally
+deduplicated artifact MIME types. No file, document, index or schema is rewritten.
+Listing uses `GET` on the same endpoint (20 results, `after` hash cursor).
+`GET /v1/files/{file-id}/source-archives/{manifest-sha256}/{raw|text|manifest}`
+checks the complete association and returns a safe attachment with its hash.
+Other service identities cannot call these management routes.
+
+URL, capture time and extraction method remain operator assertions. Byte hashes
+and equal spans establish retention consistency, not factual accuracy or proof
+that the extracted text was derived from the supplied source. Automatic deletion
+is not enabled. Standard backups must include the Knowledge artifacts, references
+and immutable target documents; restoring only a search index is insufficient.
+
+Local PostgreSQL suite: 22 top-level tests and 16 subtests passed, five explicit
+opt-in tests skipped; vet and independent build passed. New coverage includes
+concurrent retries, commit-stage rollback, corruption, scoped member downloads,
+authorization, gzip bounds and Unicode association. This does not establish
+HTTP lost-reply or process-kill recovery. Deployment/real archive restore evidence
+belongs to the integration ledger.

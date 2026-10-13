@@ -262,6 +262,7 @@ func (s *Store) Retrieve(ctx context.Context, ref Ref, kb KnowledgeBase, query s
 }
 func (s *Server) Routes(mux *http.ServeMux) {
 	s.documentRoutes(mux)
+	s.sourceArchiveRoutes(mux)
 	mux.HandleFunc("GET /v1/status", servicehttp.Wrap(func(w http.ResponseWriter, r *http.Request) error {
 		var count int64
 		if e := s.Store.DB.QueryRow(r.Context(), "SELECT count(*) FROM knowledge_files WHERE status='ready'").Scan(&count); e != nil {
