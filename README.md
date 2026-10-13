@@ -136,6 +136,24 @@ does not make legacy readers safe after format 2 has been persisted. Restore
 verification must also understand both formats. This is an outstanding release
 gate, not a completed deployment or real-source UI acceptance claim.
 
+The reader bridge now exposes `--source-archive-profile` as
+`{"format":1,"reader":2,"writer":1}` without opening a database. The release
+descriptor must match the actual executable. A future enabled importer retains
+the canonical `{"format":1,"minimum_reader":2}` artifact under the permanent
+`knowledge-protocol:source-archives` root in the same transaction as format 2.
+That protocol root is not ordinary uploaded content and must never be garbage
+collected. Removing manifests cannot lower the floor. Missing, conflicting or
+corrupt markers and unknown manifest formats fail compatibility checks;
+idempotent retry cannot silently repair ambiguous protocol state. Startup audits
+retained formats; normal readiness checks the indexed fixed marker only.
+
+Local reader-floor candidate checks: 30 top-level tests and 24 subtests passed,
+five existing external-provider/Indexer opt-ins skipped; vet and build passed.
+The Windows integration separately tests its real database probes and manager
+entrypoints, including a killed client whose PostgreSQL COMMIT is still pending.
+This binary still cannot enable capture writes; actual writer activation,
+Sources migration, UI and real-source recovery remain outstanding.
+
 
 Control callers can attach original source bytes and their historical UTF-8
 extraction to an existing immutable upload using

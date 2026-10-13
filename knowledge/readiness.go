@@ -13,5 +13,9 @@ func Readiness(ctx context.Context, db *pgxpool.Pool) error {
 		return errors.New("database required")
 	}
 	_, err := db.Exec(ctx, readinessQuery)
+	if err != nil {
+		return err
+	}
+	_, err = archiveRequirement(ctx, db, 0)
 	return err
 }

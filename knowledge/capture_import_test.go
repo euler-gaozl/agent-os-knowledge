@@ -135,7 +135,7 @@ func TestCaptureImportConcurrentRetryRepairsMissingArchiveAndDetectsCorruption(t
 		hash = out.Source.Hash
 	}
 	var n int
-	for table, want := range map[string]int{"knowledge_files": 1, "documents": 1, "artifacts": 4, "artifact_refs": 4} {
+	for table, want := range map[string]int{"knowledge_files": 1, "documents": 1, "artifacts": 5, "artifact_refs": 5} {
 		if e = s.DB.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); e != nil || n != want {
 			t.Fatal(table, n, e)
 		}

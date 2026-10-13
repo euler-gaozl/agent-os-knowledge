@@ -197,6 +197,9 @@ func (s *Store) importCapture(ctx context.Context, ref Ref, id string) (CaptureI
 		return out, err
 	}
 	defer tx.Rollback(ctx)
+	if _, err = archiveRequirement(ctx, tx, 1); err != nil {
+		return out, err
+	}
 	out.File, err = uploadKnowledgeTx(ctx, tx, ref, kb, name, in.URL, body, string(body))
 	if err != nil {
 		return out, err
@@ -212,6 +215,9 @@ func (s *Store) importCapture(ctx context.Context, ref Ref, id string) (CaptureI
 	}
 	out.Source, err = attachSourceArchiveTx(ctx, tx, out.File.ID, in, receipt)
 	if err != nil {
+		return out, err
+	}
+	if err = retainArchiveFloor(ctx, tx); err != nil {
 		return out, err
 	}
 	return out, tx.Commit(ctx)
