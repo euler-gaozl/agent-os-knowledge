@@ -105,3 +105,13 @@ The query path and migrator are this owner's code; no paid model calls or
 external retrieval backend were involved. The dedicated cluster stopped after
 the check and its evidence is retained. No resource limits were imposed on this
 Windows smoke run, so its latency is not the 2 CPU/4 GiB acceptance result.
+
+Local model retrieval now returns distinct document handles and short previews,
+with explicit all-terms and partial-coverage caveats. The Web query retains full
+snippets; `document_read` remains the authorized path to complete text and source
+metadata. With the existing eight-hit/local-ID limits, the encoded preview stays
+under 5,500 bytes, below Runtime's 6,000-byte whole-result archival threshold.
+This avoids hiding later document IDs inside paged JSON. Committed old tool
+receipts are unchanged. Local PostgreSQL tests: 20 pass, five explicit opt-in
+skips (external backends and Indexer binary/helper); vet/build pass. Real-model
+delivery evidence and limitations belong to the integration delivery ledger.

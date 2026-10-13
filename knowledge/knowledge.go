@@ -358,7 +358,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 		if e != nil {
 			return e
 		}
-		servicehttp.JSONResponse(w, 200, v)
+		servicehttp.JSONResponse(w, 200, retrievalForModel(v))
 		return nil
 	}))
 	mux.HandleFunc("POST /v1/files/{id}/retry", servicehttp.Wrap(func(w http.ResponseWriter, r *http.Request) error {
