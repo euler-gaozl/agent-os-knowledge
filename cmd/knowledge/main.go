@@ -15,7 +15,7 @@ func main() {
 			return nil, nil, err
 		}
 		client := servicehost.Client()
-		store := &knowledge.Store{DB: p, ResourceReader: client, SecretReader: client, RunReader: client}
+		store := &knowledge.Store{DB: p, ResourceReader: client, SecretReader: client, RunReader: client, CaptureReader: knowledge.CaptureHTTPReader{BaseURL: servicehost.Env("SOURCES_URL", "http://127.0.0.1:8101"), Token: client.Token}}
 		return (&knowledge.Server{Store: store, HTTP: c}).Handler(), nil, nil
 	})
 }

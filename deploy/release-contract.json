@@ -10,5 +10,10 @@
     "tools": [],
     "engines": []
   },
-  "indexing_protocol": "knowledge-indexing-v1"
+  "indexing_protocol": "knowledge-indexing-v1",
+  "source_archives": {
+    "reader_formats": [1, 2],
+    "writer_formats": [1],
+    "capture_import_writes": false
+  }
 }

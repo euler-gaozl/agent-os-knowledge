@@ -48,24 +48,25 @@ type SourceArchiveInput struct {
 }
 
 type SourceArchive struct {
-	Format           int          `json:"format"`
-	FileID           string       `json:"file_id"`
-	DocumentID       string       `json:"document_id"`
-	Knowledge        Ref          `json:"knowledge"`
-	FileHash         string       `json:"file_sha256"`
-	URL              string       `json:"url"`
-	CapturedAt       string       `json:"captured_at"`
-	MediaType        string       `json:"media_type"`
-	ExtractionMethod string       `json:"extraction_method"`
-	RawHash          string       `json:"raw_sha256"`
-	RawEncoding      string       `json:"raw_encoding"`
-	StoredRawHash    string       `json:"stored_raw_sha256"`
-	StoredRawBytes   int          `json:"stored_raw_bytes"`
-	RawBytes         int          `json:"raw_bytes"`
-	TextHash         string       `json:"text_sha256"`
-	TextBytes        int          `json:"text_bytes"`
-	Spans            []SourceSpan `json:"spans"`
-	Provenance       string       `json:"provenance"`
+	Format           int             `json:"format"`
+	FileID           string          `json:"file_id"`
+	DocumentID       string          `json:"document_id"`
+	Knowledge        Ref             `json:"knowledge"`
+	FileHash         string          `json:"file_sha256"`
+	URL              string          `json:"url"`
+	CapturedAt       string          `json:"captured_at"`
+	MediaType        string          `json:"media_type"`
+	ExtractionMethod string          `json:"extraction_method"`
+	RawHash          string          `json:"raw_sha256"`
+	RawEncoding      string          `json:"raw_encoding"`
+	StoredRawHash    string          `json:"stored_raw_sha256"`
+	StoredRawBytes   int             `json:"stored_raw_bytes"`
+	RawBytes         int             `json:"raw_bytes"`
+	TextHash         string          `json:"text_sha256"`
+	TextBytes        int             `json:"text_bytes"`
+	Spans            []SourceSpan    `json:"spans"`
+	Provenance       string          `json:"provenance"`
+	Capture          *CaptureReceipt `json:"capture,omitempty"`
 }
 
 type SourceArchiveRecord struct {
@@ -164,9 +165,18 @@ func (s *Store) AttachSourceArchive(ctx context.Context, fileID string, in Sourc
 		return out, err
 	}
 	defer tx.Rollback(ctx)
+	out, err = attachSourceArchiveTx(ctx, tx, fileID, in, nil)
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+func attachSourceArchiveTx(ctx context.Context, tx pgx.Tx, fileID string, in SourceArchiveInput, capture *CaptureReceipt) (SourceArchiveRecord, error) {
+	var out SourceArchiveRecord
 	var fileHash, documentID, document string
 	var ref Ref
-	err = tx.QueryRow(ctx, `SELECT f.artifact_hash,f.document_id,d.content,f.kb_id,f.kb_revision FROM knowledge_files f JOIN documents d ON d.id=f.document_id WHERE f.id=$1 FOR SHARE OF f,d`, fileID).Scan(&fileHash, &documentID, &document, &ref.ID, &ref.Revision)
+	err := tx.QueryRow(ctx, `SELECT f.artifact_hash,f.document_id,d.content,f.kb_id,f.kb_revision FROM knowledge_files f JOIN documents d ON d.id=f.document_id WHERE f.id=$1 FOR SHARE OF f,d`, fileID).Scan(&fileHash, &documentID, &document, &ref.ID, &ref.Revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, sourceArchiveError(404, "knowledge file not found")
 	}
@@ -182,6 +192,11 @@ func (s *Store) AttachSourceArchive(ctx context.Context, fileID string, in Sourc
 	when, _ := time.Parse(time.RFC3339Nano, in.CapturedAt)
 	raw, _ := decodeArchivedRaw(in)
 	out.Archive = SourceArchive{Format: 1, FileID: fileID, DocumentID: documentID, Knowledge: ref, FileHash: fileHash, URL: in.URL, CapturedAt: when.UTC().Format(time.RFC3339Nano), MediaType: in.MediaType, ExtractionMethod: in.ExtractionMethod, RawHash: in.RawHash, RawEncoding: in.RawEncoding, StoredRawHash: Hash(in.Raw), StoredRawBytes: len(in.Raw), RawBytes: len(raw), TextHash: in.TextHash, TextBytes: len([]byte(in.Text)), Spans: in.Spans, Provenance: archiveProvenance}
+	if capture != nil {
+		out.Archive.Format = 2
+		out.Archive.Capture = capture
+		out.Archive.Provenance = captureProvenance
+	}
 	manifest := JSON(out.Archive)
 	out.Hash = Hash(manifest)
 	if len(manifest) > 16384 {
@@ -213,7 +228,7 @@ func (s *Store) AttachSourceArchive(ctx context.Context, fileID string, in Sourc
 			return out, sourceArchiveError(409, "stored archive artifact is corrupt")
 		}
 	}
-	return out, tx.Commit(ctx)
+	return out, nil
 }
 
 func (s *Store) SourceArchives(ctx context.Context, fileID, after string) (SourceArchivePage, error) {
@@ -261,8 +276,8 @@ func decodeSourceManifest(body []byte, item *SourceArchiveRecord, fileID, fileHa
 		return false
 	}
 	a := item.Archive
-	return a.Format == 1 && a.FileID == fileID && a.FileHash == fileHash && a.DocumentID == documentID && a.Knowledge == ref &&
-		a.Provenance == archiveProvenance && archiveHash.MatchString(a.RawHash) && archiveHash.MatchString(a.StoredRawHash) && archiveHash.MatchString(a.TextHash) &&
+	return validArchiveOrigin(a) && a.FileID == fileID && a.FileHash == fileHash && a.DocumentID == documentID && a.Knowledge == ref &&
+		archiveHash.MatchString(a.RawHash) && archiveHash.MatchString(a.StoredRawHash) && archiveHash.MatchString(a.TextHash) &&
 		a.StoredRawBytes > 0 && a.StoredRawBytes <= 1<<20 && a.RawBytes > 0 && a.RawBytes <= 1<<20 && a.TextBytes > 0 && a.TextBytes <= 1<<20 &&
 		(a.RawEncoding == "identity" || a.RawEncoding == "gzip") && len(a.Spans) > 0 && len(a.Spans) <= 64
 }

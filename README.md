@@ -118,6 +118,25 @@ delivery evidence and limitations belong to the integration delivery ledger.
 
 ## Retained source archives
 
+The capture-import reader bridge also reads archive format 2, which records an
+authenticated Sources capture ID, requested/final URL, extractor version and
+deterministic import format. Historic operator-supplied archives remain format 1.
+The candidate's atomic import implementation is tested with disposable databases,
+but the production `/v1/import-capture` route is **compile-time disabled** and
+capabilities report `configured: false`. No environment flag enables it. This
+bridge still writes only format 1 and can precede a coordinated writer rollout.
+`SOURCES_URL` defaults to loopback port 8101; remote deployments must configure
+the fixed service URL and authorize the Knowledge identity on Sources. Both
+capability discovery and bundle reads forbid redirects and remain bounded.
+
+Do not enable capture writes until the integrator enforces the retained-data
+reader requirement during startup, update, rollback and interrupted-release
+recovery, including writer → bridge → legacy rollback. A format-2-capable bridge
+does not make legacy readers safe after format 2 has been persisted. Restore
+verification must also understand both formats. This is an outstanding release
+gate, not a completed deployment or real-source UI acceptance claim.
+
+
 Control callers can attach original source bytes and their historical UTF-8
 extraction to an existing immutable upload using
 `POST /v1/files/{file-id}/source-archives`. The caller supplies the uploaded file

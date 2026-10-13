@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/euler-gaozl/agent-os-knowledge/internal/files"
 	. "github.com/euler-gaozl/agent-os-sdk/contracts"
 	"github.com/euler-gaozl/agent-os-sdk/servicehttp"
 	"github.com/jackc/pgx/v5"
@@ -120,17 +121,26 @@ func (s *Store) UploadKnowledge(ctx context.Context, ref Ref, name, source strin
 		return f, e
 	}
 	defer tx.Rollback(ctx)
+	f, e = uploadKnowledgeTx(ctx, tx, ref, kb, name, source, body, content)
+	if e != nil {
+		return f, e
+	}
+	return f, tx.Commit(ctx)
+}
+
+// The caller owns commit so capture imports can retain the complete source in
+// this same transaction. Duplicate reads also use tx, never a second pool slot.
+func uploadKnowledgeTx(ctx context.Context, tx pgx.Tx, ref Ref, kb KnowledgeBase, name, source string, body []byte, content string) (KnowledgeFile, error) {
 	hash := Hash(body)
-	f = KnowledgeFile{ID: ID(), KBID: ref.ID, Revision: ref.Revision, Name: name, Hash: hash, Config: kb, Status: "queued"}
+	f := KnowledgeFile{ID: ID(), KBID: ref.ID, Revision: ref.Revision, Name: name, Hash: hash, Config: kb, Status: "queued"}
 	// Serializes duplicate uploads before creating documents or retention roots.
-	if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", fmt.Sprint(ref.ID, ref.Revision, hash)); e != nil {
+	if _, e := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", fmt.Sprint(ref.ID, ref.Revision, hash)); e != nil {
 		return f, e
 	}
 	var existing string
-	e = tx.QueryRow(ctx, "SELECT id FROM knowledge_files WHERE kb_id=$1 AND kb_revision=$2 AND artifact_hash=$3", ref.ID, ref.Revision, hash).Scan(&existing)
+	e := tx.QueryRow(ctx, "SELECT id FROM knowledge_files WHERE kb_id=$1 AND kb_revision=$2 AND artifact_hash=$3", ref.ID, ref.Revision, hash).Scan(&existing)
 	if e == nil {
-		_ = tx.Rollback(ctx)
-		return s.KnowledgeFile(ctx, existing)
+		return files.Read(ctx, tx, existing)
 	}
 	if !errors.Is(e, pgx.ErrNoRows) {
 		return f, e
@@ -157,7 +167,7 @@ func (s *Store) UploadKnowledge(ctx context.Context, ref Ref, name, source strin
 	if e = tx.SendBatch(ctx, batch).Close(); e != nil {
 		return f, e
 	}
-	return f, tx.Commit(ctx)
+	return f, nil
 }
 func (s *Store) Retrieve(ctx context.Context, ref Ref, kb KnowledgeBase, query string) (Retrieval, error) {
 	result := Retrieval{Engine: kb.Engine, Hits: []map[string]any{}}
@@ -263,6 +273,7 @@ func (s *Store) Retrieve(ctx context.Context, ref Ref, kb KnowledgeBase, query s
 func (s *Server) Routes(mux *http.ServeMux) {
 	s.documentRoutes(mux)
 	s.sourceArchiveRoutes(mux)
+	s.captureImportRoutes(mux)
 	mux.HandleFunc("GET /v1/status", servicehttp.Wrap(func(w http.ResponseWriter, r *http.Request) error {
 		var count int64
 		if e := s.Store.DB.QueryRow(r.Context(), "SELECT count(*) FROM knowledge_files WHERE status='ready'").Scan(&count); e != nil {
@@ -410,6 +421,7 @@ type Store struct {
 	ResourceReader
 	SecretReader
 	RunReader
+	CaptureReader
 }
 type Server struct {
 	Store *Store

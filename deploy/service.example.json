@@ -5,6 +5,7 @@
   "SERVICE_PEERS": "<JSON object: role to SHA-256 of peer token>",
   "REGISTRY_URL": "http://127.0.0.1:8096",
   "RUNTIME_URL": "http://127.0.0.1:8094",
+  "SOURCES_URL": "http://127.0.0.1:8101",
   "DB_MAX_CONNS": "3",
   "HTTP_MAX_CONCURRENT": "4",
   "GOMEMLIMIT": "96MiB"
