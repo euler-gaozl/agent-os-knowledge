@@ -166,9 +166,7 @@ func TestCaptureImportHTTPDiscardedReplyAndPermissions(t *testing.T) {
 	token := strings.Repeat("c", 40)
 	runtimeToken := strings.Repeat("r", 40)
 	server := &Server{Store: s}
-	handler := servicehttp.New(servicehttp.Config{Role: "knowledge", Peers: map[string]string{"control": servicehttp.TokenHash(token), "runtime": servicehttp.TokenHash(runtimeToken)}, Authorize: Authorize}, s.DB.Ping, func(m *http.ServeMux) {
-		m.HandleFunc("POST /v1/import-capture", servicehttp.Wrap(server.importCaptureHTTP))
-	})
+	handler := servicehttp.New(servicehttp.Config{Role: "knowledge", Peers: map[string]string{"control": servicehttp.TokenHash(token), "runtime": servicehttp.TokenHash(runtimeToken)}, Authorize: Authorize}, s.DB.Ping, server.captureImportRoutes)
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 	input := JSON(map[string]any{"knowledge": Ref{ID: "capture-test", Revision: 1}, "capture_id": b.ID})
@@ -290,16 +288,24 @@ func TestCaptureBundleValidationAndFixedAuthenticatedTransport(t *testing.T) {
 	}
 }
 
-func TestReaderBridgeDisablesCaptureWrites(t *testing.T) {
-	if CaptureImportWritesEnabled {
-		t.Fatal("this reader bridge must not enable format 2 writes")
+func TestCaptureWriterCapabilitiesAndInput(t *testing.T) {
+	if !CaptureImportWritesEnabled || ArchiveProfile().Writer != 2 || ArchiveProfile().Reader != 2 {
+		t.Fatal("writer must attest format-2 read and write support")
 	}
 	m := http.NewServeMux()
-	(&Server{Store: &Store{}}).captureImportRoutes(m)
+	(&Server{Store: &Store{CaptureReader: captureFixtureReader{fixtureCapture()}}}).captureImportRoutes(m)
+	caps := httptest.NewRecorder()
+	m.ServeHTTP(caps, httptest.NewRequest("GET", "/v1/capture-import-capabilities", nil))
+	var capabilities struct {
+		Configured bool `json:"configured"`
+	}
+	if json.Unmarshal(caps.Body.Bytes(), &capabilities) != nil || !capabilities.Configured {
+		t.Fatal("writer capability is not available")
+	}
 	w := httptest.NewRecorder()
 	m.ServeHTTP(w, httptest.NewRequest("POST", "/v1/import-capture", strings.NewReader(`{}`)))
-	if w.Code != 503 {
-		t.Fatal("writer gate bypass", w.Code)
+	if w.Code != 400 {
+		t.Fatal("invalid capture input accepted", w.Code)
 	}
 }
 

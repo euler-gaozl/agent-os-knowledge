@@ -41,10 +41,10 @@ type CaptureReader interface {
 
 type CaptureHTTPReader struct{ BaseURL, Token string }
 
-// A reader bridge release understands format 2 but must not create it before
-// the platform enforces the persistent reader floor across every rollback.
+// This writer requires the persistent archive floor and a format-2-capable
+// recovery release. The deployment manager checks both before activation.
 // This is deliberately a compile-time release choice, not a config toggle.
-const CaptureImportWritesEnabled = false
+const CaptureImportWritesEnabled = true
 
 func (c CaptureHTTPReader) ReadCapture(ctx context.Context, id string) (CaptureBundle, error) {
 	var out CaptureBundle

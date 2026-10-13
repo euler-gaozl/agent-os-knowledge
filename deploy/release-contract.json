@@ -6,7 +6,7 @@
   "backward_compatible": true,
   "contract": {
     "http": "agentos-http-v0.6-notes-lifecycle",
-    "data": "knowledge-v0.6",
+    "data": "knowledge-v0.7-source-archives",
     "tools": [],
     "engines": []
   },
@@ -14,6 +14,6 @@
   "source_archives": {
     "format": 1,
     "reader": 2,
-    "writer": 1
+    "writer": 2
   }
 }

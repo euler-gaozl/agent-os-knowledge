@@ -118,27 +118,29 @@ delivery evidence and limitations belong to the integration delivery ledger.
 
 ## Retained source archives
 
-The capture-import reader bridge also reads archive format 2, which records an
+The capture importer reads and writes archive format 2, which records an
 authenticated Sources capture ID, requested/final URL, extractor version and
 deterministic import format. Historic operator-supplied archives remain format 1.
-The candidate's atomic import implementation is tested with disposable databases,
-but the production `/v1/import-capture` route is **compile-time disabled** and
-capabilities report `configured: false`. No environment flag enables it. This
-bridge still writes only format 1 and can precede a coordinated writer rollout.
+The production `/v1/import-capture` route imports a retained Sources capture
+into a fixed Knowledge revision. Document, chunks, original bytes, extracted
+text, provenance and the permanent reader requirement commit atomically.
+The compile-time profile is reader 2 / writer 2, with data contract
+`knowledge-v0.7-source-archives`. Deploy reader bridge `794780c` first; its
+profile is reader 2 / writer 1 and its capture route remains disabled.
 `SOURCES_URL` defaults to loopback port 8101; remote deployments must configure
 the fixed service URL and authorize the Knowledge identity on Sources. Both
 capability discovery and bundle reads forbid redirects and remain bounded.
 
-Do not enable capture writes until the integrator enforces the retained-data
-reader requirement during startup, update, rollback and interrupted-release
-recovery, including writer → bridge → legacy rollback. A format-2-capable bridge
-does not make legacy readers safe after format 2 has been persisted. Restore
-verification must also understand both formats. This is an outstanding release
-gate, not a completed deployment or real-source UI acceptance claim.
+Deployments must enforce the retained-data reader requirement during startup,
+update, rollback and interrupted-release recovery, including writer → bridge →
+legacy rollback. A format-2-capable bridge does not make legacy readers safe
+after format 2 has been persisted. The Windows integration enforces these gates
+and tests actual service binaries. Other deployment managers must implement the
+same contract; a direct binary launch cannot validate its rollback package.
+Restore verification must understand both formats and the permanent marker.
 
-The reader bridge now exposes `--source-archive-profile` as
-`{"format":1,"reader":2,"writer":1}` without opening a database. The release
-descriptor must match the actual executable. A future enabled importer retains
+`--source-archive-profile` reports the compiled capabilities without opening a
+database. The release descriptor must match the actual executable. The importer retains
 the canonical `{"format":1,"minimum_reader":2}` artifact under the permanent
 `knowledge-protocol:source-archives` root in the same transaction as format 2.
 That protocol root is not ordinary uploaded content and must never be garbage
@@ -151,8 +153,11 @@ Local reader-floor candidate checks: 30 top-level tests and 24 subtests passed,
 five existing external-provider/Indexer opt-ins skipped; vet and build passed.
 The Windows integration separately tests its real database probes and manager
 entrypoints, including a killed client whose PostgreSQL COMMIT is still pending.
-This binary still cannot enable capture writes; actual writer activation,
-Sources migration, UI and real-source recovery remain outstanding.
+The actual writer process has also passed import-then-release-failure recovery
+to the reader bridge, member downloads, incompatible legacy rollback refusal
+and same-request retry without duplicate files. That test uses controlled HTTP
+peers and an isolated database. Sources migration, UI and actual new-source
+acceptance are separate integration deliverables.
 
 
 Control callers can attach original source bytes and their historical UTF-8
