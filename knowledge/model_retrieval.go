@@ -21,15 +21,19 @@ func retrievalForModel(result contracts.Retrieval) any {
 			continue
 		}
 		seen[id] = true
-		hits = append(hits, map[string]any{
+		item := map[string]any{
 			"document_id": id, "chunk_id": hit["chunk_id"],
 			"title": previewText(hit["title"], 64), "content": previewText(hit["content"], 96),
-		})
+		}
+		if offset, ok := hit["document_offset"].(int); ok && offset >= 0 {
+			item["document_offset"] = offset
+		}
+		hits = append(hits, item)
 	}
 	view := map[string]any{
 		"engine": result.Engine, "hits": hits, "preview_only": true,
 		"query_mode": "all_terms", "coverage": "matching_candidates_only",
-		"note": "关键词必须同时匹配；空结果先缩短查询。最多8个片段，非全量目录。按document_id使用document_read回读正文、来源和日期；预览不是完整证据。",
+		"note": "关键词必须同时匹配；空结果先缩短查询。最多8个片段，非全量目录。document_offset是原文中命中块起点的Unicode字符偏移，可直接用document_read(id=document_id,offset=document_offset)回读；省略表示未定位，不是0。核对相邻页的日期和样本；预览不是完整证据。",
 	}
 	// JSON escaping (including control characters) can expand otherwise short
 	// snippets. Retain handles, reduce only previews, and stay below 6000 bytes.

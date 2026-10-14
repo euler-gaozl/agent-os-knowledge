@@ -86,6 +86,9 @@ func TestFileNameSearchAndLegacyBackfillRemainVersionScoped(t *testing.T) {
 		if e != nil || len(result.Hits) != 1 || result.Hits[0]["document_id"] != f.DocumentID || result.Hits[0]["matched_on"] != "file_name" {
 			t.Fatal(result, e)
 		}
+		if offset, ok := result.Hits[0]["document_offset"].(int); !ok || offset != 0 {
+			t.Fatal("filename fallback has wrong document location", result.Hits[0])
+		}
 	}
 	check()
 	if _, e = s.DB.Exec(ctx, "UPDATE knowledge_files SET name_vector=NULL"); e != nil {

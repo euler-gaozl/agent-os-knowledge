@@ -190,11 +190,16 @@ func (s *Store) Retrieve(ctx context.Context, ref Ref, kb KnowledgeBase, query s
 		}
 		for rows.Next() {
 			var id, content, source, document, name string
-			if e = rows.Scan(&id, &content, &source, &document, &name); e != nil {
+			var offset int
+			if e = rows.Scan(&id, &content, &source, &document, &name, &offset); e != nil {
 				rows.Close()
 				return result, e
 			}
-			result.Hits = append(result.Hits, map[string]any{"chunk_id": id, "content": content, "source": source, "document_id": document, "title": name})
+			hit := map[string]any{"chunk_id": id, "content": content, "source": source, "document_id": document, "title": name}
+			if offset >= 0 {
+				hit["document_offset"] = offset
+			}
+			result.Hits = append(result.Hits, hit)
 		}
 		e = rows.Err()
 		rows.Close()
@@ -211,10 +216,15 @@ func (s *Store) Retrieve(ctx context.Context, ref Ref, kb KnowledgeBase, query s
 		defer rows.Close()
 		for rows.Next() {
 			var id, content, source, document, name string
-			if e = rows.Scan(&id, &content, &source, &document, &name); e != nil {
+			var offset int
+			if e = rows.Scan(&id, &content, &source, &document, &name, &offset); e != nil {
 				return result, e
 			}
-			result.Hits = append(result.Hits, map[string]any{"chunk_id": id, "content": content, "source": source, "document_id": document, "title": name, "matched_on": "file_name"})
+			hit := map[string]any{"chunk_id": id, "content": content, "source": source, "document_id": document, "title": name, "matched_on": "file_name"}
+			if offset >= 0 {
+				hit["document_offset"] = offset
+			}
+			result.Hits = append(result.Hits, hit)
 		}
 		return result, rows.Err()
 	}
