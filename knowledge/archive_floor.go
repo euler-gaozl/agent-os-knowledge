@@ -50,7 +50,7 @@ const archiveFloorQuery = `WITH marker AS MATERIALIZED (
  AND r.root >= 'knowledge-source:' AND r.root < 'knowledge-source;' AND r.root ~ '^knowledge-source:[a-f0-9]{32}:manifests$'
 )
 SELECT json_build_object('markers',(SELECT coalesce(json_agg(marker),'[]'::json) FROM marker),
- 'has_format2',EXISTS(SELECT 1 FROM manifests WHERE format='2'),
+ 'has_manifest',EXISTS(SELECT 1 FROM manifests WHERE format IN ('1','2')),
  'invalid_manifest',EXISTS(SELECT 1 FROM manifests WHERE format IS NULL OR format NOT IN ('1','2')))::text`
 
 func archiveRequirement(ctx context.Context, db archiveFloorReader, mode int) (int, error) {
@@ -66,15 +66,15 @@ func archiveRequirement(ctx context.Context, db archiveFloorReader, mode int) (i
 			Body  string `json:"body"`
 			Bytes int    `json:"bytes"`
 		} `json:"markers"`
-		HasFormat2      bool `json:"has_format2"`
+		HasManifest     bool `json:"has_manifest"`
 		InvalidManifest bool `json:"invalid_manifest"`
 	}
 	if json.Unmarshal(raw, &facts) != nil || facts.InvalidManifest || len(facts.Markers) > 1 {
 		return 0, errors.New("invalid source archive protocol state")
 	}
 	if len(facts.Markers) == 0 {
-		if facts.HasFormat2 {
-			return 0, errors.New("format 2 source archive exists without its persistent reader requirement")
+		if facts.HasManifest {
+			return 0, errors.New("source archive exists without its persistent reader requirement")
 		}
 		return 1, nil
 	}
