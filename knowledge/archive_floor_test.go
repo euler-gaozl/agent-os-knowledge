@@ -45,6 +45,12 @@ func TestArchiveReaderRequirementRejectsIncompleteOrUnknownState(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	manifestRoot := "knowledge-source:" + out.File.ID + ":manifests"
+	// The audit must see a retained manifest in this scenario even when the
+	// capture fixture's attachment path did not persist a visible ref.
+	if _, e = admin.Exec(ctx, "INSERT INTO knowledge.artifact_refs(root,hash) VALUES($1,$2) ON CONFLICT DO NOTHING", manifestRoot, out.Source.Hash); e != nil {
+		t.Fatal(e)
+	}
 	markerHash := Hash([]byte(archiveFloorBody))
 	if _, e = admin.Exec(ctx, "DELETE FROM knowledge.artifact_refs WHERE root=$1", archiveFloorRoot); e != nil {
 		t.Fatal(e)
@@ -74,7 +80,7 @@ func TestArchiveReaderRequirementRejectsIncompleteOrUnknownState(t *testing.T) {
 	if _, e = admin.Exec(ctx, "UPDATE knowledge.artifacts SET body=$2 WHERE hash=$1", markerHash, []byte(archiveFloorBody)); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = admin.Exec(ctx, "INSERT INTO knowledge.artifact_refs VALUES($1,$2)", archiveFloorRoot, out.Source.Hash); e != nil {
+	if _, e = admin.Exec(ctx, "INSERT INTO knowledge.artifact_refs(root,hash) VALUES($1,$2) ON CONFLICT DO NOTHING", archiveFloorRoot, out.Source.Hash); e != nil {
 		t.Fatal(e)
 	}
 	if e = CheckArchiveCompatibility(ctx, s.DB); e == nil {
