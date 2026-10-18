@@ -47,7 +47,7 @@ const archiveFloorQuery = `WITH marker AS MATERIALIZED (
  ELSE (convert_from(a.body,'UTF8')::json->'format')::text END format
  FROM artifact_refs r LEFT JOIN artifacts a ON a.hash=r.hash
  WHERE ($1::int=2 OR ($1::int=1 AND NOT EXISTS(SELECT 1 FROM marker)))
- AND r.root >= 'knowledge-source:' AND r.root < 'knowledge-source;' AND r.root ~ '^knowledge-source:[a-f0-9]{32}:manifests$'
+ AND r.root COLLATE "C" >= 'knowledge-source:' AND r.root COLLATE "C" < 'knowledge-source;' AND r.root ~ '^knowledge-source:[a-f0-9]{32}:manifests$'
 )
 SELECT json_build_object('markers',(SELECT coalesce(json_agg(marker),'[]'::json) FROM marker),
  'has_manifest',EXISTS(SELECT 1 FROM manifests WHERE format IN ('1','2')),

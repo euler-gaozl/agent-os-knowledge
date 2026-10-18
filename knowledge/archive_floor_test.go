@@ -46,12 +46,6 @@ func TestArchiveReaderRequirementRejectsIncompleteOrUnknownState(t *testing.T) {
 		t.Fatal(e)
 	}
 	manifestRoot := "knowledge-source:" + out.File.ID + ":manifests"
-	t.Logf("manifestRoot=%s hash=%s", manifestRoot, out.Source.Hash)
-	var debugCount int
-	var debugBody []byte
-	_ = s.DB.QueryRow(ctx, "SELECT count(*) FROM artifact_refs WHERE root=$1", manifestRoot).Scan(&debugCount)
-	_ = s.DB.QueryRow(ctx, "SELECT body FROM artifacts WHERE hash=$1", out.Source.Hash).Scan(&debugBody)
-	t.Logf("refs=%d bodyPrefix=%q", debugCount, string(debugBody[:min(120,len(debugBody))]))
 	// The audit must see a retained manifest in this scenario even when the
 	// capture fixture's attachment path did not persist a visible ref.
 	if _, e = admin.Exec(ctx, "INSERT INTO knowledge.artifact_refs(root,hash) VALUES($1,$2) ON CONFLICT DO NOTHING", manifestRoot, out.Source.Hash); e != nil {
@@ -61,10 +55,6 @@ func TestArchiveReaderRequirementRejectsIncompleteOrUnknownState(t *testing.T) {
 	if _, e = admin.Exec(ctx, "DELETE FROM knowledge.artifact_refs WHERE root=$1", archiveFloorRoot); e != nil {
 		t.Fatal(e)
 	}
-	var markerAfter int
-	_ = s.DB.QueryRow(ctx, "SELECT count(*) FROM artifact_refs WHERE root=$1", archiveFloorRoot).Scan(&markerAfter)
-	debugFloor, debugErr := archiveRequirement(ctx, s.DB, 2)
-	t.Logf("afterDelete marker=%d floor=%d err=%v", markerAfter, debugFloor, debugErr)
 	if e = CheckArchiveCompatibility(ctx, s.DB); e == nil {
 		t.Fatal("missing marker accepted at startup")
 	}
