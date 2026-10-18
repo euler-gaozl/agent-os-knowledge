@@ -61,6 +61,10 @@ func TestArchiveReaderRequirementRejectsIncompleteOrUnknownState(t *testing.T) {
 	if _, e = admin.Exec(ctx, "DELETE FROM knowledge.artifact_refs WHERE root=$1", archiveFloorRoot); e != nil {
 		t.Fatal(e)
 	}
+	var markerAfter int
+	_ = s.DB.QueryRow(ctx, "SELECT count(*) FROM artifact_refs WHERE root=$1", archiveFloorRoot).Scan(&markerAfter)
+	debugFloor, debugErr := archiveRequirement(ctx, s.DB, 2)
+	t.Logf("afterDelete marker=%d floor=%d err=%v", markerAfter, debugFloor, debugErr)
 	if e = CheckArchiveCompatibility(ctx, s.DB); e == nil {
 		t.Fatal("missing marker accepted at startup")
 	}
